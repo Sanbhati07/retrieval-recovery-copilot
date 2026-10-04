@@ -1,4 +1,4 @@
-name: Build real photo corpus
+name: Build real photo corpus (Wikimedia Commons)
 
 on:
   workflow_dispatch:
@@ -15,19 +15,28 @@ jobs:
       contents: read
     env:
       CORPUS_TARGET: ${{ inputs.target }}
-      CORPUS_VERSION: v3
-      OPENVERSE_PAGE_SIZE: '50'
-      OPENVERSE_MAX_PAGES: '6'
+      CORPUS_VERSION: v4
+      COMMONS_SEARCH_LIMIT: '50'
+      COMMONS_MAX_OFFSETS_PER_QUERY: '4'
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
           node-version: 24
-      - run: npm install
-      - run: npm run corpus:build
-      - uses: actions/upload-artifact@v4
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build real photo corpus
+        run: npm run corpus:build
+
+      - name: Upload corpus manifest
+        uses: actions/upload-artifact@v4
         with:
-          name: real-corpus-manifest
-          path: data/real-corpus/manifest-v3.json
+          name: real-corpus-manifest-v4
+          path: data/real-corpus/manifest-v4.json

@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "corpus:build": "node scripts/corpus/build_openverse.mjs",
+    "corpus:build": "node scripts/corpus/build_wikimedia.mjs",
     "corpus:embed": "node scripts/corpus/embed_corpus.mjs"
   },
   "dependencies": {
