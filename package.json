@@ -1,0 +1,32 @@
+{
+  "name": "retrieval-recovery-copilot",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "corpus:build": "node scripts/corpus/build_openverse.mjs",
+    "corpus:embed": "node scripts/corpus/embed_corpus.mjs"
+  },
+  "dependencies": {
+    "@google/genai": "latest",
+    "@supabase/supabase-js": "latest",
+    "next": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "zod": "latest",
+    "zod-to-json-schema": "latest",
+    "sharp": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "typescript": "latest"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}
