@@ -27,11 +27,25 @@ const RETRY_BASE_MS = 2000;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function errorText(err) {
+  const parts = [
+    err?.message,
+    err?.status,
+    err?.code,
+    err?.error?.message,
+    err?.error?.status,
+    err?.error?.code,
+    err?.error?.details ? JSON.stringify(err.error.details) : '',
+    err?.cause ? String(err.cause) : '',
+  ].filter(Boolean);
+
+  let serialized = '';
   try {
-    return JSON.stringify(err);
+    serialized = JSON.stringify(err);
   } catch {
-    return String(err?.message || err || '');
+    serialized = '';
   }
+
+  return `${parts.join(' ')} ${serialized}`.toLowerCase();
 }
 
 function isDailyQuotaError(err) {
