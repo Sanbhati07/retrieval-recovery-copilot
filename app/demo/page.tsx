@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-type Candidate = { id:string; image:string; takenAt:string; location:{city:string;state:string;country:string}; event:string; people:string[]; objects:string[]; scenes:string[]; appearance:string[]; score:number };
+type Candidate = { id:string; image:string; title:string|null; creator:string|null; attribution:string|null; license:string; licenseUrl:string; tags:string[]; score:number };
 type RetrievalResponse = { mode:string; memory:{memorySummary:string;clues:any[];unknownDimensions:string[]}; candidates:Candidate[]; failure:{type:string;reason:string}; recovery:null|{dimension:string;question:string;options:string[]}; error?:string };
 
 function getSession(){
@@ -23,7 +23,7 @@ export default function Demo(){
     if(fresh) await track("retrieval_started");
     await track("memory_submitted",{metadata:{length:memory.length}});
     try{
-      const r=await fetch("/api/retrieve",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({memory,activeClues:nextClues})});
+      const r=await fetch("/api/retrieve",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({memory,activeClues:nextClues,sessionId:getSession()})});
       const data=await r.json();
       if(!r.ok) throw new Error(data.error||"Retrieval failed");
       setResult(data);await track("candidates_shown",{metadata:{count:data.candidates?.length||0,failure:data.failure?.type,mode:data.mode}});
