@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 type Candidate = { id:string; image:string; title:string|null; creator:string|null; attribution:string|null; license:string; licenseUrl:string; tags:string[]; score:number };
 type RetrievalResponse = { mode:string; memory:{memorySummary:string;clues:any[];unknownDimensions:string[]}; candidates:Candidate[]; failure:{type:string;reason:string}; recovery:null|{dimension:string;question:string;options:string[]}; error?:string };
@@ -32,7 +32,7 @@ export default function Demo(){
     finally{setLoading(false)}
   };
 
-  useEffect(()=>{ run([], true); },[]);
+
   const clueText=useMemo(()=>result?.memory.clues?.filter((x:any)=>x.explicit).slice(0,6)||[],[result]);
 
   return <main className="wrap">

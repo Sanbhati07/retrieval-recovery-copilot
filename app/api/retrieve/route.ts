@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { parseMemory, embedText } from "../../../lib/gemini";
+import { parseMemory, embedText, GeminiRuntimeError } from "../../../lib/gemini";
 import { getSupabaseAdmin } from "../../../lib/supabase";
 import { chooseRecoveryQuestion } from "../../../lib/recovery";
 import { detectFailure } from "../../../lib/scoring";
@@ -74,7 +74,20 @@ export async function POST(req: Request) {
       recovery,
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unexpected retrieval error.";
+    if (error instanceof GeminiRuntimeError) {
+      return NextResponse.json(
+        {
+          error: error.message,
+          code: "GEMINI_TEMPORARILY_UNAVAILABLE",
+        },
+        { status: error.httpStatus }
+      );
+    }
+
+    const message = error instanceof Error
+      ? error.message
+      : "Unexpected retrieval error.";
+
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
