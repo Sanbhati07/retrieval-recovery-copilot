@@ -53,19 +53,19 @@ export default function Demo(){
       </div>
 
       <div className="card">
-        <div className="section-title"><h2>{result.failure.type === "strong" ? "Strong match" : "The first search is not strong enough yet"}</h2><span className="pill">{result.failure.type}</span></div>
-        <div className={result.failure.type === "strong" ? "banner" : "banner warn"}>{result.failure.reason}</div>
+        <div className="section-title"><h2>{result.failure.type === "strong" ? "Strong match" : "Let's narrow this down"}</h2><span className="pill">{result.failure.type === "strong" ? "Good match" : "Several possibilities"}</span></div>
+        <div className={result.failure.type === "strong" ? "banner" : "banner warn"}>{result.failure.type === "candidate_overload" ? "Several photos could match what you described." : result.failure.reason}</div>
         <div className="candidates">
           {result.candidates.map((c,i)=><button key={c.id} className="candidate" onClick={()=>{setSelected(c.id);track("candidate_clicked",{candidateId:c.id,rank:i+1,metadata:{score:c.score}})}}>
             <img src={c.image} alt="Candidate photo" /><div className="candidate-body"><span className="score">#{i+1}</span><div className="candidate-title">{c.title || "Possible match"}</div><div className="candidate-meta">{c.attribution || "Open-licensed photo"}</div></div>
           </button>)}
         </div>
         <div className="row" style={{marginTop:14}}>
-          <button className="secondary" onClick={()=>{setSelected(null);track("none_of_these");}}>None of these</button>
+          <button className="secondary" onClick={()=>{setSelected(null);track("none_of_these");document.getElementById("recovery-step")?.scrollIntoView({behavior:"smooth",block:"center"});}}>None of these</button>
         </div>
       </div>
 
-      {result.recovery && <div className="card">
+      {result.recovery && <div id="recovery-step" className="card">
         <div className="section-title"><h2>Let's recover the search</h2><span className="pill">One high-value clue</span></div>
         <p className="sub">{result.recovery.question}</p>
         <div className="chips">{result.recovery.options.map((o)=><button key={o} className="chip" onClick={()=>{
