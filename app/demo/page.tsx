@@ -38,12 +38,12 @@ const sampleMemories = [
 ];
 const FALLBACK_RECOVERY = {
   dimension: "objects",
-  question: "What else do you remember about the photo?",
+  question: "Do you remember another object or visual detail in the photo?",
   options: [
-    "A person or people",
-    "A vehicle such as a car or bike",
-    "A building, road or landscape",
-    "A sign or some text",
+    "A person",
+    "A vehicle",
+    "A building or place",
+    "A sign or text",
     "Not sure",
   ],
 };
@@ -135,7 +135,7 @@ export default function Demo(){
         </div>
 
         <p className="sub" style={{marginBottom:0}}>
-  You can also write your own memory Ã¢â‚¬â€ describe what you remember instead of trying to guess exact search words.
+  You can also write your own memory â€” describe what you remember instead of trying to guess exact search words.
 </p>
       </div>
 
@@ -143,13 +143,7 @@ export default function Demo(){
 
     {result && <>
       <div className="card">
-        <div className="section-title"><h2>What I understood</h2>
-        {activeClues.length > 0 && (
-          <span className="pill">
-            Search updated with: {activeClues[activeClues.length - 1]?.value}
-          </span>
-        )}
-      </div><span className="pill">{result.mode === "semantic" ? "AI semantic retrieval" : "Controlled fallback"}</span></div>
+        <div className="section-title"><h2>What I understood</h2><span className="pill">{result.mode === "semantic" ? "AI semantic retrieval" : "Controlled fallback"}</span></div>
         <p className="sub">{result.memory.memorySummary}</p>
         <div className="chips">{clueText.map((c:any)=><span className="chip" key={c.dimension+"-"+c.value}>{c.value}</span>)}</div>
       </div>
