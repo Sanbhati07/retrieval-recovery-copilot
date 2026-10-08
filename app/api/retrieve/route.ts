@@ -45,7 +45,14 @@ export async function POST(req: Request) {
       .filter((c, i, arr) => arr.findIndex(x => x.dimension === c.dimension && x.value.toLowerCase() === c.value.toLowerCase()) === i)
       .slice(0, 14);
 
-    const query = await embedText(memory);
+    const queryText = [
+  memory,
+  ...supplied
+    .filter((c) => c.explicit)
+    .map((c) => c.value),
+].join(". ");
+
+const query = await embedText(queryText);
     const candidates = await vectorSearch(query, 40);
     if (!candidates.length) {
       return NextResponse.json({ error: "The photo corpus is not indexed yet. Please try again after the public demo finishes its one-time indexing step." }, { status: 503 });
@@ -54,7 +61,7 @@ export async function POST(req: Request) {
     const reranked = rerankCandidates(candidates, clues);
     const failure = detectFailure(reranked);
     const usedForRecovery = clues.filter(c => c.explicit && c.certainty >= 0.75);
-    const recovery = failure.type === "strong" ? null : chooseRecoveryQuestion(reranked, usedForRecovery);
+    const recovery = chooseRecoveryQuestion(reranked, usedForRecovery);
 
     return NextResponse.json({
       mode: "semantic",

@@ -36,23 +36,35 @@ const sampleMemories = [
     memory: "I remember a photo of a room before renovation, but I don't remember the date.",
   },
 ];
+const FALLBACK_RECOVERY = {
+  dimension: "objects",
+  question: "Do you remember another object or visual detail in the photo?",
+  options: [
+    "A person",
+    "A vehicle",
+    "A building or place",
+    "A sign or text",
+    "Not sure",
+  ],
+};
 export default function Demo(){
   const [memory,setMemory]=useState("I remember a bike trip photo in the mountains. I was wearing a black jacket and a friend was with me, but I don't remember the exact year.");
   const [activeClues,setActiveClues]=useState<any[]>([]);
   const [result,setResult]=useState<RetrievalResponse|null>(null);
   const [loading,setLoading]=useState(false);
   const [selected,setSelected]=useState<string|null>(null);
+  const [showRecovery,setShowRecovery]=useState(false);
   const [error,setError]=useState<string>("");
 
   const run=async(nextClues:any[]=activeClues, fresh=false)=>{
-    setLoading(true);setError("");setSelected(null);
+    setLoading(true);setError("");setSelected(null);setShowRecovery(false);
     if(fresh) await track("retrieval_started");
     await track("memory_submitted",{metadata:{length:memory.length}});
     try{
       const r=await fetch("/api/retrieve",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({memory,activeClues:nextClues,sessionId:getSession()})});
       const data=await r.json();
       if(!r.ok) throw new Error(data.error||"Retrieval failed");
-      setResult(data);await track("candidates_shown",{metadata:{count:data.candidates?.length||0,failure:data.failure?.type,mode:data.mode}});
+      setResult(data);setShowRecovery(data.failure?.type !== "strong");await track("candidates_shown",{metadata:{count:data.candidates?.length||0,failure:data.failure?.type,mode:data.mode}});
       if(data.recovery)await track("recovery_question_shown",{dimension:data.recovery.dimension});
     }catch(e){setError(e instanceof Error?e.message:"Unexpected error");}
     finally{setLoading(false)}
@@ -60,6 +72,7 @@ export default function Demo(){
 
 
   const clueText=useMemo(()=>result?.memory.clues?.filter((x:any)=>x.explicit).slice(0,6)||[],[result]);
+  const recoveryStep = result && showRecovery ? (result.recovery ?? FALLBACK_RECOVERY) : null;
 
   return <main className="wrap">
     <div className="row" style={{justifyContent:"space-between"}}><div className="eyebrow">Retrieval Recovery Copilot</div><a href="/" className="pill">About this prototype</a></div>
@@ -69,12 +82,12 @@ export default function Demo(){
       <div className="row" style={{marginTop:12}}><button className="primary" disabled={loading} onClick={()=>{setActiveClues([]);run([],true)}}>{loading?"Finding...":"Find my photo"}</button></div>
     </div>      <div className="card" style={{marginTop:14}}>
         <div className="section-title">
-          <h2>Not sure what to write? Try a sample memory</h2>
+          <h2>Not sure what to search? Try a sample memory</h2>
           <span className="pill">Starting points</span>
         </div>
 
         <p className="sub" style={{marginTop:-4}}>
-          Describe the photo the way you remember it. These examples show the kind of clues you can use.
+          Pick a full example below to see the kind of memory you can give the system. Clicking one fills the box; then press Find my photo.
         </p>
 
         <div className="chips">
@@ -83,23 +96,25 @@ export default function Demo(){
               key={sample.label}
               type="button"
               className="chip"
+              style={{textAlign:"left",height:"auto",minHeight:72,whiteSpace:"normal",display:"block",padding:"12px 14px"}}
               disabled={loading}
               onClick={() => {
                 setMemory(sample.memory);
                 setActiveClues([]);
                 setResult(null);
                 setSelected(null);
+                setShowRecovery(false);
                 setError("");
               }}
               title={sample.memory}
             >
-              {sample.label}
+              <strong>{sample.label}</strong><br /><span style={{fontSize:13,lineHeight:1.35}}>{sample.memory}</span>
             </button>
           ))}
         </div>
 
         <p className="sub" style={{marginBottom:0}}>
-          You can also write your own memory — the goal is to describe what you remember, not to guess the exact search words.
+          You can also write your own memory Ã¢â‚¬â€ the goal is to describe what you remember, not to guess the exact search words.
         </p>
       </div>
 
@@ -125,12 +140,12 @@ export default function Demo(){
         </div>
       </div>
 
-      {result.recovery && <div id="recovery-step" className="card">
+      {recoveryStep && <div id="recovery-step" className="card">
         <div className="section-title"><h2>Let's recover the search</h2><span className="pill">One high-value clue</span></div>
-        <p className="sub">{result.recovery.question}</p>
-        <div className="chips">{result.recovery.options.map((o)=><button key={o} className="chip" onClick={()=>{
-          const next=[...activeClues,{dimension:result.recovery!.dimension,value:o,certainty:o==="Not sure"?0:1,explicit:true}];
-          setActiveClues(next);track("recovery_option_selected",{dimension:result.recovery!.dimension,option:o});run(next,false);
+        <p className="sub">{recoveryStep!.question}</p>
+        <div className="chips">{recoveryStep!.options.map((o)=><button key={o} className="chip" onClick={()=>{
+          const next=[...activeClues,{dimension:recoveryStep!.dimension,value:o,certainty:o==="Not sure"?0:1,explicit:true}];
+          setActiveClues(next);track("recovery_option_selected",{dimension:recoveryStep!.dimension,option:o});run(next,false);
         }}>{o}</button>)}</div>
       </div>}
 
