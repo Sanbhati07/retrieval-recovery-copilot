@@ -10,6 +10,32 @@ function getSession(){
 }
 async function track(event:string, extra:any={}){ try{await fetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({event,sessionId:getSession(),...extra})})}catch{} }
 
+const sampleMemories = [
+  {
+    label: "Car repair",
+    memory: "I remember a photo of a car in a garage, maybe while it was being repaired, but I don't remember the year.",
+  },
+  {
+    label: "Mountain trip",
+    memory: "I remember a mountain trip photo. I was wearing a black jacket and a friend was with me, but I don't remember the year.",
+  },
+  {
+    label: "Family photo",
+    memory: "I remember a family photo with my parents, but I don't remember the occasion or the date.",
+  },
+  {
+    label: "Cafe trip",
+    memory: "I remember a photo outside a small cafe during a trip, but I don't remember the city.",
+  },
+  {
+    label: "Bike trip",
+    memory: "I remember my bike parked near a scenic road and a friend was in the frame.",
+  },
+  {
+    label: "Room before renovation",
+    memory: "I remember a photo of a room before renovation, but I don't remember the date.",
+  },
+];
 export default function Demo(){
   const [memory,setMemory]=useState("I remember a bike trip photo in the mountains. I was wearing a black jacket and a friend was with me, but I don't remember the exact year.");
   const [activeClues,setActiveClues]=useState<any[]>([]);
@@ -41,7 +67,41 @@ export default function Demo(){
       <div className="section-title"><h2>Describe the photo you remember</h2><span className="pill">No exact date required</span></div>
       <textarea className="input" value={memory} onChange={e=>setMemory(e.target.value)} placeholder="Example: I remember a photo from a trip..." />
       <div className="row" style={{marginTop:12}}><button className="primary" disabled={loading} onClick={()=>{setActiveClues([]);run([],true)}}>{loading?"Finding...":"Find my photo"}</button></div>
-    </div>
+    </div>      <div className="card" style={{marginTop:14}}>
+        <div className="section-title">
+          <h2>Not sure what to write? Try a sample memory</h2>
+          <span className="pill">Starting points</span>
+        </div>
+
+        <p className="sub" style={{marginTop:-4}}>
+          Describe the photo the way you remember it. These examples show the kind of clues you can use.
+        </p>
+
+        <div className="chips">
+          {sampleMemories.map((sample) => (
+            <button
+              key={sample.label}
+              type="button"
+              className="chip"
+              disabled={loading}
+              onClick={() => {
+                setMemory(sample.memory);
+                setActiveClues([]);
+                setResult(null);
+                setSelected(null);
+                setError("");
+              }}
+              title={sample.memory}
+            >
+              {sample.label}
+            </button>
+          ))}
+        </div>
+
+        <p className="sub" style={{marginBottom:0}}>
+          You can also write your own memory — the goal is to describe what you remember, not to guess the exact search words.
+        </p>
+      </div>
 
     {error && <div className="card"><div className="banner warn"><b>Something went wrong</b><br/>{error}<div className="sub" style={{marginTop:6}}>Check the server-side Gemini and Supabase configuration.</div></div></div>}
 
