@@ -82,12 +82,33 @@ export default function Demo(){
       <div className="row" style={{marginTop:12}}><button className="primary" disabled={loading} onClick={()=>{setActiveClues([]);run([],true)}}>{loading?"Finding...":"Find my photo"}</button></div>
     </div>      <div className="card" style={{marginTop:14}}>
         <div className="section-title">
-          <h2>Not sure what to search? Try a sample memory</h2>
+          <h2>How to try the prototype</h2>
+          <span className="pill">3 simple steps</span>
+        </div>
+
+        <div className="row" style={{gap:12,flexWrap:"wrap"}}>
+          <div className="banner" style={{flex:"1 1 220px"}}>
+            <strong>1. Pick a sample</strong><br />
+            Choose a memory below, or write your own.
+          </div>
+          <div className="banner" style={{flex:"1 1 220px"}}>
+            <strong>2. Find the photos</strong><br />
+            Press <strong>Find my photo</strong> and review the possible matches.
+          </div>
+          <div className="banner warn" style={{flex:"1 1 220px"}}>
+            <strong>3. Need another try?</strong><br />
+            Click <strong>None of these</strong>, answer one useful clue, and search again.
+          </div>
+        </div>
+      </div>
+      <div className="card" style={{marginTop:14}}>
+        <div className="section-title">
+          <h2>Not sure what to search? Try a sample</h2>
           <span className="pill">Starting points</span>
         </div>
 
         <p className="sub" style={{marginTop:-4}}>
-          Pick a full example below to see the kind of memory you can give the system. Clicking one fills the box; then press Find my photo.
+          Pick an example below. Clicking one fills the search box; then press Find my photo.
         </p>
 
         <div className="chips">
@@ -108,14 +129,14 @@ export default function Demo(){
               }}
               title={sample.memory}
             >
-              <strong>{sample.label}</strong><br /><span style={{fontSize:13,lineHeight:1.35}}>{sample.memory}</span>
+              <strong>{sample.label}</strong><br /><span style={{fontSize:14,lineHeight:1.4}}>{sample.memory}</span>
             </button>
           ))}
         </div>
 
         <p className="sub" style={{marginBottom:0}}>
-          You can also write your own memory Ã¢â‚¬â€ the goal is to describe what you remember, not to guess the exact search words.
-        </p>
+  You can also write your own memory — describe what you remember instead of trying to guess exact search words.
+</p>
       </div>
 
     {error && <div className="card"><div className="banner warn"><b>Something went wrong</b><br/>{error}<div className="sub" style={{marginTop:6}}>Check the server-side Gemini and Supabase configuration.</div></div></div>}
@@ -136,7 +157,7 @@ export default function Demo(){
           </button>)}
         </div>
         <div className="row" style={{marginTop:14}}>
-          <button className="secondary" onClick={()=>{setSelected(null);track("none_of_these");document.getElementById("recovery-step")?.scrollIntoView({behavior:"smooth",block:"center"});}}>None of these</button>
+          <button className="secondary" onClick={()=>{setSelected(null);track("none_of_these");setShowRecovery(true);requestAnimationFrame(()=>document.getElementById("recovery-step")?.scrollIntoView({behavior:"smooth",block:"center"}));}}>None of these</button>
         </div>
       </div>
 

@@ -29,6 +29,57 @@ async function vectorSearch(query: number[], limit = 40): Promise<Candidate[]> {
   });
 }
 
+function geminiErrorText(error: unknown): string {
+  const parts = [
+    error instanceof Error ? error.message : "",
+    (error as any)?.status,
+    (error as any)?.code,
+    (error as any)?.error?.message,
+    (error as any)?.error?.status,
+    (error as any)?.error?.code,
+  ].filter(Boolean);
+
+  try {
+    parts.push(JSON.stringify(error));
+  } catch {}
+
+  return parts.join(" ").toLowerCase();
+}
+
+function isTransientGeminiError(error: unknown): boolean {
+  const text = geminiErrorText(error);
+
+  return (
+    text.includes("503") ||
+    text.includes("unavailable") ||
+    text.includes("temporarily busy") ||
+    text.includes("high demand") ||
+    text.includes("502") ||
+    text.includes("504")
+  );
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function withGeminiRetry<T>(operation: () => Promise<T>): Promise<T> {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+
+      if (!isTransientGeminiError(error) || attempt === 2) {
+        throw error;
+      }
+
+      await sleep(800 * Math.pow(2, attempt));
+    }
+  }
+
+  throw lastError;
+}
 export async function POST(req: Request) {
   try {
     const body = await req.json() as { memory?: string; activeClues?: MemoryClue[]; sessionId?: string };
@@ -39,7 +90,7 @@ export async function POST(req: Request) {
     }
     if (!sessionId) return NextResponse.json({ error: "Session is missing. Refresh the page and try again." }, { status: 400 });
 
-    const parsed = await parseMemory(memory);
+    const parsed = await withGeminiRetry(() => parseMemory(memory));
     const supplied = validateClues(body.activeClues);
     const clues = [...parsed.clues, ...supplied]
       .filter((c, i, arr) => arr.findIndex(x => x.dimension === c.dimension && x.value.toLowerCase() === c.value.toLowerCase()) === i)
@@ -52,7 +103,7 @@ export async function POST(req: Request) {
     .map((c) => c.value),
 ].join(". ");
 
-const query = await embedText(queryText);
+const query = await withGeminiRetry(() => embedText(queryText));
     const candidates = await vectorSearch(query, 40);
     if (!candidates.length) {
       return NextResponse.json({ error: "The photo corpus is not indexed yet. Please try again after the public demo finishes its one-time indexing step." }, { status: 503 });
