@@ -64,7 +64,7 @@ export default function Demo(){
       const r=await fetch("/api/retrieve",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({memory,activeClues:nextClues,sessionId:getSession()})});
       const data=await r.json();
       if(!r.ok) throw new Error(data.error||"Retrieval failed");
-      setResult(data);setShowRecovery(data.failure?.type !== "strong");await track("candidates_shown",{metadata:{count:data.candidates?.length||0,failure:data.failure?.type,mode:data.mode}});
+      setResult(data);setShowRecovery(false);await track("candidates_shown",{metadata:{count:data.candidates?.length||0,failure:data.failure?.type,mode:data.mode}});
       if(data.recovery)await track("recovery_question_shown",{dimension:data.recovery.dimension});
     }catch(e){setError(e instanceof Error?e.message:"Unexpected error");}
     finally{setLoading(false)}
@@ -135,7 +135,7 @@ export default function Demo(){
         </div>
 
         <p className="sub" style={{marginBottom:0}}>
-  You can also write your own memory — describe what you remember instead of trying to guess exact search words.
+  You can also write your own memory â€” describe what you remember instead of trying to guess exact search words.
 </p>
       </div>
 
@@ -157,7 +157,23 @@ export default function Demo(){
           </button>)}
         </div>
         <div className="row" style={{marginTop:14}}>
-          <button className="secondary" onClick={()=>{setSelected(null);track("none_of_these");setShowRecovery(true);requestAnimationFrame(()=>document.getElementById("recovery-step")?.scrollIntoView({behavior:"smooth",block:"center"}));}}>None of these</button>
+          <button
+  className="secondary"
+  type="button"
+  onClick={()=>{
+    setSelected(null);
+    track("none_of_these");
+    setShowRecovery(true);
+    requestAnimationFrame(()=>{
+      document.getElementById("recovery-step")?.scrollIntoView({
+        behavior:"smooth",
+        block:"center"
+      });
+    });
+  }}
+>
+  None of these
+</button>
         </div>
       </div>
 
