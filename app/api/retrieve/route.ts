@@ -80,6 +80,88 @@ async function withGeminiRetry<T>(operation: () => Promise<T>): Promise<T> {
 
   throw lastError;
 }
+function flattenPhotoText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map(flattenPhotoText).join(" ");
+  if (value && typeof value === "object") {
+    return Object.values(value as Record<string, unknown>).map(flattenPhotoText).join(" ");
+  }
+  return "";
+}
+
+const RECOVERY_GROUPS = [
+  {
+    keys: ["vehicle", "car", "motorcycle", "motorbike", "bike", "bicycle", "scooter", "truck", "bus", "automobile"],
+    terms: ["vehicle", "car", "motorcycle", "motorbike", "bike", "bicycle", "scooter", "truck", "bus", "automobile"],
+  },
+  {
+    keys: ["person", "people", "family", "man", "woman", "child", "friend", "group"],
+    terms: ["person", "people", "family", "man", "woman", "child", "friend", "group"],
+  },
+  {
+    keys: ["building", "place", "road", "landscape", "mountain", "lake", "cafe", "garage", "street", "house"],
+    terms: ["building", "place", "road", "landscape", "mountain", "lake", "cafe", "garage", "street", "house"],
+  },
+  {
+    keys: ["sign", "text", "writing", "words", "label", "poster"],
+    terms: ["sign", "text", "writing", "words", "label", "poster"],
+  },
+];
+
+function recoveryTerms(value: string): string[] {
+  const text = value.toLowerCase();
+
+  const group = RECOVERY_GROUPS.find((g) =>
+    g.keys.some((key) => text.includes(key))
+  );
+
+  if (group) return group.terms;
+
+  return text
+    .split(/[^a-z0-9]+/)
+    .filter((term) => term.length >= 3)
+    .slice(0, 8);
+}
+
+function boostRecoveryResults(
+  candidates: Candidate[],
+  recoveryClues: MemoryClue[]
+): Candidate[] {
+  return candidates
+    .map((candidate) => {
+      const searchable = flattenPhotoText({
+        title: candidate.title,
+        tags: candidate.tags,
+        creator: candidate.creator,
+        attribution: candidate.attribution,
+        retrievalMetadata: candidate.retrievalMetadata,
+      }).toLowerCase();
+
+      let boost = 0;
+
+      for (const clue of recoveryClues) {
+        if (!clue.explicit || clue.certainty < 0.75) continue;
+
+        const value = clue.value?.trim();
+        if (!value || value.toLowerCase() === "not sure") continue;
+
+        const terms = recoveryTerms(value);
+        const hits = terms.filter((term) => searchable.includes(term)).length;
+
+        if (hits > 0) {
+          const coverage = Math.min(1, hits / 3);
+          boost += 0.18 * coverage;
+        }
+      }
+
+      return {
+        ...candidate,
+        structuredScore: Math.min(1, candidate.structuredScore + boost),
+        finalScore: Math.min(1, candidate.finalScore + boost),
+      };
+    })
+    .sort((a, b) => b.finalScore - a.finalScore);
+}
 export async function POST(req: Request) {
   try {
     const body = await req.json() as { memory?: string; activeClues?: MemoryClue[]; sessionId?: string };
@@ -104,20 +186,24 @@ export async function POST(req: Request) {
 ].join(". ");
 
 const query = await withGeminiRetry(() => embedText(queryText));
-    const candidates = await vectorSearch(query, 40);
+    const candidates = await vectorSearch(query, supplied.length > 0 ? 80 : 40);
     if (!candidates.length) {
       return NextResponse.json({ error: "The photo corpus is not indexed yet. Please try again after the public demo finishes its one-time indexing step." }, { status: 503 });
     }
 
     const reranked = rerankCandidates(candidates, clues);
-    const failure = detectFailure(reranked);
+const finalResults =
+  supplied.length > 0
+    ? boostRecoveryResults(reranked, supplied)
+    : reranked;
+    const failure = detectFailure(finalResults);
     const usedForRecovery = clues.filter(c => c.explicit && c.certainty >= 0.75);
-    const recovery = chooseRecoveryQuestion(reranked, usedForRecovery);
+    const recovery = chooseRecoveryQuestion(finalResults, usedForRecovery);
 
     return NextResponse.json({
       mode: "semantic",
       memory: parsed,
-      candidates: reranked.slice(0, 12).map(c => ({
+      candidates: finalResults.slice(0, 12).map(c => ({
         id: c.id,
         image: c.image,
         title: c.title,
