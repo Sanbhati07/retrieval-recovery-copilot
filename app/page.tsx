@@ -5,13 +5,13 @@ export default function Home() {
     <main className="wrap">
       <div className="top">
         <div>
-          <div className="eyebrow">Graduation MVP · Google Photos core experience</div>
+          <div className="eyebrow">Graduation MVP Â· Google Photos core experience</div>
           <h1>I remember the photo. I just don't remember enough to search for it.</h1>
           <p className="lead">
             Retrieval Recovery Copilot is a focused prototype for the moment after a photo search fails: it diagnoses a weak result set and guides the user toward the next most useful clue instead of forcing them to guess another query or manually browse years of photos.
           </p>
           <div className="row" style={{marginTop:18}}>
-            <Link className="primary" href="/demo" style={{textDecoration:"none"}}>Try the retrieval experience</Link><Link className="secondary" href="/test" style={{textDecoration:"none"}}>Run a controlled test</Link>
+            <Link className="primary" href="/demo" style={{textDecoration:"none"}}>Try the retrieval experience</Link><Link className="secondary" href="/test" style={{textDecoration:"none"}}>Compare retrieval modes</Link>
             <span className="pill">Synthetic 1,000-photo library</span>
             <span className="pill">AI mode + controlled fallback</span>
           </div>
@@ -21,7 +21,7 @@ export default function Home() {
         <section className="card">
           <div className="section-title"><h2>What is different?</h2></div>
           <p className="sub">This is not another natural-language search box. The prototype is designed around retrieval failure: zero/weak/noisy/overloaded results trigger a recovery step.</p>
-          <div className="banner"><b>Core loop</b><br/>Memory → initial retrieval → detect failure → recommend one recovery clue → re-rank → confirm.</div>
+          <div className="banner"><b>Core loop</b><br/>Memory â†’ initial retrieval â†’ detect failure â†’ recommend one recovery clue â†’ re-rank â†’ confirm.</div>
         </section>
         <section className="card">
           <div className="section-title"><h2>How we measure it</h2></div>

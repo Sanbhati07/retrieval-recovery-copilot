@@ -1,20 +1,268 @@
 "use client";
-import { useEffect, useState } from "react";
 
-function session(){const k="rr_session";let v=localStorage.getItem(k);if(!v){v=crypto.randomUUID();localStorage.setItem(k,v)}return v}
-async function track(event:string,extra:any={}){try{await fetch("/api/events",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({event,sessionId:session(),...extra})})}catch{}}
+import { useCallback, useEffect, useState } from "react";
 
-export default function Test(){
-  const [task,setTask]=useState<any>(null);const [cands,setCands]=useState<any[]>([]);const [loading,setLoading]=useState(true);const [msg,setMsg]=useState("");const [recovery,setRecovery]=useState<any>(null);const [activeClues,setActiveClues]=useState<any[]>([]);const [mode,setMode]=useState<"control"|"treatment">("treatment");
-  async function load(){setLoading(true);setMsg("");setRecovery(null);setActiveClues([]);const r=await fetch("/api/test-task");setTask(await r.json());setCands([]);setLoading(false)}
-  async function find(nextClues:any[]=activeClues){setLoading(true);await track("retrieval_started",{metadata:{mode}});await track("memory_submitted",{taskId:task.taskId});const r=await fetch("/api/retrieve",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({memory:task.userMemory,activeClues:nextClues,sessionId:session()})});const d=await r.json();if(!r.ok){setMsg(d.error||"Retrieval failed");setLoading(false);return}setCands(d.candidates||[]);setMsg(d.failure?.reason||"");setRecovery(mode==="treatment"?d.recovery:null);setLoading(false)}
-  async function choose(id:string,rank:number){await track("candidate_clicked",{taskId:task.taskId,candidateId:id,rank});const r=await fetch("/api/test-result",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({taskId:task.taskId,candidateId:id,sessionId:session()})});const d=await r.json();setMsg(d.success?"✓ Correct photo retrieved. This counts as successful retrieval.":"That candidate was not the intended photo. Continue recovery or inspect another candidate.")}
-  useEffect(()=>{load()},[]);
-  return <main className="wrap"><div className="eyebrow">Controlled evaluation · target hidden</div><h1>Test retrieval with a hidden target</h1>
-    <div className="row"><button className={mode==="control"?"primary":"secondary"} onClick={()=>setMode("control")} disabled={loading}>Control: single-pass</button><button className={mode==="treatment"?"primary":"secondary"} onClick={()=>setMode("treatment")} disabled={loading}>Treatment: recovery copilot</button><button className="secondary" onClick={load}>New hidden task</button></div>
-    {task&&<div className="card"><div className="section-title"><h2>{task.name}</h2><span className="pill">{task.difficulty}</span></div><p className="lead" style={{fontSize:17}}>{task.userMemory}</p><button className="primary" onClick={()=>find([])} disabled={loading}>{loading?"Working...":"Run retrieval"}</button></div>}
-    {msg&&<div className="card"><div className={msg.startsWith("✓")?"success":"banner warn"}>{msg}</div></div>}
-    {cands.length>0&&<div className="card"><div className="section-title"><h2>Candidate photos</h2><span className="pill">Choose only if you believe it matches</span></div><div className="candidates">{cands.slice(0,12).map((c,i)=><button key={c.id} className="candidate" onClick={()=>choose(c.id,i+1)}><img src={c.image} alt="Candidate"/><div className="candidate-body"><span className="score">#{i+1}</span><div className="candidate-title">{c.title || "Possible match"}</div><div className="candidate-meta">{c.attribution || "Open-licensed photo"}</div></div></button>)}</div><div className="row" style={{marginTop:14}}><button className="secondary" onClick={()=>{track("none_of_these",{taskId:task.taskId});setMsg("No candidate selected. Continue with the recovery step.")}}>None of these</button></div></div>}
-    {recovery&&<div className="card"><div className="section-title"><h2>Recover the search</h2><span className="pill">One high-value clue</span></div><p className="sub">{recovery.question}</p><div className="chips">{recovery.options.map((o:string)=><button className="chip" key={o} onClick={()=>{const next=[...activeClues,{dimension:recovery.dimension,value:o,certainty:o==="Not sure"?0:1,explicit:true}];setActiveClues(next);track("recovery_option_selected",{taskId:task.taskId,dimension:recovery.dimension,option:o});find(next)}}>{o}</button>)}</div></div>}
-    <p className="footer">The target photo is never sent to the browser. In test mode, success is checked server-side against hidden ground truth. Real, openly licensed demonstration photos. The benchmark target is hidden server-side.</p></main>
+type TestTask = {
+  taskId: string;
+  name: string;
+  difficulty: string;
+  userMemory: string;
+};
+
+type Candidate = {
+  id: string;
+  image: string;
+  title?: string | null;
+  attribution?: string | null;
+  score?: number;
+};
+
+type Recovery = {
+  dimension: string;
+  question: string;
+  options: string[];
+} | null;
+
+function getSession() {
+  const key = "rr_session";
+  let value = localStorage.getItem(key);
+  if (!value) {
+    value = crypto.randomUUID();
+    localStorage.setItem(key, value);
+  }
+  return value;
+}
+
+async function track(event: string, extra: Record<string, unknown> = {}) {
+  try {
+    await fetch("/api/events", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ event, sessionId: getSession(), ...extra }),
+    });
+  } catch {
+    // Telemetry failure must not block the evaluation flow.
+  }
+}
+
+function normalizeTask(payload: any): TestTask | null {
+  const candidate = payload?.task ?? payload?.data?.task ?? payload?.data ?? payload;
+  if (!candidate || typeof candidate !== "object") return null;
+
+  const taskId = candidate.taskId ?? candidate.task_id ?? candidate.id ?? payload?.taskId ?? payload?.task_id;
+  const userMemory = candidate.userMemory
+    ?? candidate.user_memory
+    ?? candidate.userMemoryText
+    ?? candidate.user_memory_text
+    ?? candidate.memory_prompt
+    ?? candidate.memoryPrompt
+    ?? candidate.memory_description
+    ?? candidate.memory_text
+    ?? candidate.user_memory_prompt
+    ?? candidate.task_prompt
+    ?? candidate.search_description
+    ?? candidate.description
+    ?? candidate.prompt
+    ?? candidate.query_text
+    ?? candidate.memory
+    ?? candidate.query
+    ?? payload?.userMemory
+    ?? payload?.user_memory
+    ?? payload?.memory_prompt
+    ?? payload?.user_memory_prompt
+    ?? payload?.prompt
+    ?? payload?.query_text;
+
+  if (typeof taskId !== "string" || !taskId.trim()) return null;
+  if (typeof userMemory !== "string" || userMemory.trim().length < 8) return null;
+
+  // Whitelist public task fields. Never pass a possible target/answer field to UI state.
+  return {
+    taskId: taskId.trim(),
+    userMemory: userMemory.trim(),
+    name: String(candidate.name ?? candidate.title ?? candidate.task_name ?? "Find the photo you remember"),
+    difficulty: String(candidate.difficulty ?? "Practice task"),
+  };
+}
+
+export default function Test() {
+  const [task, setTask] = useState<TestTask | null>(null);
+  const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [loadingTask, setLoadingTask] = useState(true);
+  const [message, setMessage] = useState("");
+  const [recovery, setRecovery] = useState<Recovery>(null);
+  const [activeClues, setActiveClues] = useState<any[]>([]);
+  const [mode, setMode] = useState<"control" | "treatment">("treatment");
+  const [showRecovery, setShowRecovery] = useState(false);
+
+  const loadTask = useCallback(async () => {
+    setLoadingTask(true);
+    setMessage("");
+    setRecovery(null);
+    setActiveClues([]);
+    setCandidates([]);
+    setShowRecovery(false);
+    setTask(null);
+    try {
+      const response = await fetch("/api/test-task", { cache: "no-store" });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload?.error || "Could not load a hidden test task.");
+      }
+      const normalized = normalizeTask(payload);
+      if (!normalized) {
+        throw new Error("The test service returned an incomplete task. Please try New hidden task again.");
+      }
+      setTask(normalized);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not load a hidden task.");
+    } finally {
+      setLoadingTask(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadTask();
+  }, [loadTask]);
+
+  async function runRetrieval(nextClues: any[] = activeClues) {
+    if (!task) {
+      setMessage("Load a hidden task before running retrieval.");
+      return;
+    }
+
+    setLoading(true);
+    setMessage("");
+    setCandidates([]);
+    setRecovery(null);
+    setShowRecovery(false);
+    await track("retrieval_started", { taskId: task.taskId, metadata: { mode } });
+    await track("memory_submitted", { taskId: task.taskId, metadata: { mode } });
+
+    try {
+      const response = await fetch("/api/retrieve", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ memory: task.userMemory, activeClues: nextClues, sessionId: getSession() }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload?.error || "Retrieval failed. Please try again.");
+
+      const found = Array.isArray(payload?.candidates) ? payload.candidates : [];
+      setCandidates(found);
+      setMessage(payload?.failure?.reason || (found.length ? "Review the candidates and choose only if one matches." : "No credible candidates were found for this task."));
+      setRecovery(mode === "treatment" ? payload?.recovery ?? null : null);
+      await track("candidates_shown", { taskId: task.taskId, metadata: { count: found.length, failure: payload?.failure?.type, mode } });
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Retrieval failed. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function selectCandidate(candidateId: string, rank: number) {
+    if (!task) return;
+    setLoading(true);
+    try {
+      await track("candidate_clicked", { taskId: task.taskId, candidateId, rank, metadata: { mode } });
+      const response = await fetch("/api/test-result", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ taskId: task.taskId, candidateId, sessionId: getSession() }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload?.error || "Could not verify this candidate.");
+      setMessage(payload?.success
+        ? "Correct photo retrieved. This counts as successful retrieval."
+        : "This was not the intended photo. You can reject the set and try a recovery clue.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not verify this candidate.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function rejectCandidates() {
+    if (!task) return;
+    void track("none_of_these", { taskId: task.taskId, metadata: { mode, candidateCount: candidates.length } });
+    setMessage("No candidate selected. Use one additional clue below to refine the search.");
+    setShowRecovery(true);
+    requestAnimationFrame(() => document.getElementById("test-recovery-step")?.scrollIntoView({ behavior: "smooth", block: "center" }));
+  }
+
+  function chooseClue(option: string) {
+    if (!recovery || !task) return;
+    const next = [...activeClues, {
+      dimension: recovery.dimension,
+      value: option,
+      certainty: option === "Not sure" ? 0 : 1,
+      explicit: option !== "Not sure",
+    }];
+    setActiveClues(next);
+    void track("recovery_option_selected", { taskId: task.taskId, dimension: recovery.dimension, option, metadata: { mode } });
+    void runRetrieval(next);
+  }
+
+  return (
+    <main className="wrap">
+      <div className="eyebrow">Controlled evaluation Â· target hidden</div>
+      <h1>Compare single-pass search with guided recovery</h1>
+      <p className="sub">
+        The same kind of memory can be tested in two modes. Control runs one search. Treatment lets you add a recovery clue if the first candidates are wrong. The intended photo stays hidden and success is checked by the server.
+      </p>
+
+      <div className="card">
+        <div className="section-title"><h2>1. Choose an approach</h2></div>
+        <div className="row">
+          <button className={mode === "control" ? "primary" : "secondary"} onClick={() => setMode("control")} disabled={loading || loadingTask}>Control Â· single-pass</button>
+          <button className={mode === "treatment" ? "primary" : "secondary"} onClick={() => setMode("treatment")} disabled={loading || loadingTask}>Treatment Â· recovery copilot</button>
+          <button className="secondary" onClick={() => void loadTask()} disabled={loading || loadingTask}>New hidden task</button>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="section-title"><h2>2. Read the memory</h2>{task && <span className="pill">{task.difficulty}</span>}</div>
+        {loadingTask && <p className="sub">Preparing a hidden taskâ€¦</p>}
+        {!loadingTask && task && <>
+          <h3>{task.name}</h3>
+          <p className="lead" style={{ fontSize: 17 }}>{task.userMemory}</p>
+          <button className="primary" onClick={() => void runRetrieval([])} disabled={loading}>Run retrieval</button>
+        </>}
+        {!loadingTask && !task && <>
+          <p className="banner warn">{message || "No hidden task is available right now."}</p>
+          <button className="secondary" onClick={() => void loadTask()}>Try loading the task again</button>
+        </>}
+      </div>
+
+      {loading && <div className="card" role="status" aria-live="polite"><strong>Finding matching photosâ€¦</strong><p className="sub">Using the selected approach to search the demonstration library.</p></div>}
+
+      {message && task && !loading && <div className="card"><div className={message.startsWith("Correct photo retrieved") ? "success" : "banner warn"}>{message}</div></div>}
+
+      {candidates.length > 0 && <div className="card">
+        <div className="section-title"><h2>3. Review the candidates</h2><span className="pill">Target remains hidden</span></div>
+        <div className="candidates">
+          {candidates.slice(0, 12).map((candidate, index) => (
+            <button key={candidate.id} className="candidate" onClick={() => void selectCandidate(candidate.id, index + 1)} disabled={loading}>
+              <img src={candidate.image} alt="Candidate photo" />
+              <div className="candidate-body"><span className="score">#{index + 1}</span><div className="candidate-title">{candidate.title || "Possible match"}</div><div className="candidate-meta">{candidate.attribution || "Open-licensed photo"}</div></div>
+            </button>
+          ))}
+        </div>
+        {mode === "treatment" && <div className="row" style={{ marginTop: 14 }}><button className="secondary" onClick={rejectCandidates} disabled={loading}>None of these</button></div>}
+      </div>}
+
+      {showRecovery && mode === "treatment" && <div className="card" id="test-recovery-step">
+        <div className="section-title"><h2>4. Recover the search</h2><span className="pill">One clue at a time</span></div>
+        {recovery ? <>
+          <p className="sub">{recovery.question}</p>
+          <div className="chips">
+            {recovery.options.map((option) => <button className="chip" key={option} onClick={() => chooseClue(option)} disabled={loading}>{option}</button>)}
+          </div>
+        </> : <p className="sub">No useful recovery question was available for this result set. Try a new hidden task.</p>}
+      </div>}
+
+      <p className="footer">The target photo is never shown to the browser. The server checks selected candidates against the hidden benchmark target. This is a prototype evaluation harness, not a completed real-user study.</p>
+    </main>
+  );
 }
