@@ -5,35 +5,64 @@ export default function Home() {
     <main className="wrap">
       <div className="top">
         <div>
-          <div className="eyebrow">Graduation MVP Â· Google Photos core experience</div>
+          <div className="eyebrow">Graduation MVP - Google Photos core experience</div>
           <h1>I remember the photo. I just don't remember enough to search for it.</h1>
           <p className="lead">
-            Retrieval Recovery Copilot is a focused prototype for the moment after a photo search fails: it diagnoses a weak result set and guides the user toward the next most useful clue instead of forcing them to guess another query or manually browse years of photos.
+            Retrieval Recovery Copilot helps when a photo search does not find the right picture. Instead of making you guess another query or browse through years of photos, it asks for one useful extra clue and uses it to refine the results.
           </p>
-          <div className="row" style={{marginTop:18}}>
-            <Link className="primary" href="/demo" style={{textDecoration:"none"}}>Try the retrieval experience</Link><Link className="secondary" href="/test" style={{textDecoration:"none"}}>Compare retrieval modes</Link>
-            <span className="pill">Synthetic 1,000-photo library</span>
-            <span className="pill">AI mode + controlled fallback</span>
+          <div className="row" style={{ marginTop: 18 }}>
+            <Link className="primary" href="/demo" style={{ textDecoration: "none" }}>
+              Try the retrieval experience
+            </Link>
+            <span className="pill">1,000 openly licensed demo photos</span>
+            <span className="pill">Guided recovery after a weak search</span>
           </div>
         </div>
       </div>
+
       <div className="grid">
         <section className="card">
-          <div className="section-title"><h2>What is different?</h2></div>
-          <p className="sub">This is not another natural-language search box. The prototype is designed around retrieval failure: zero/weak/noisy/overloaded results trigger a recovery step.</p>
-          <div className="banner"><b>Core loop</b><br/>Memory â†’ initial retrieval â†’ detect failure â†’ recommend one recovery clue â†’ re-rank â†’ confirm.</div>
+          <div className="section-title">
+            <h2>What is different?</h2>
+          </div>
+          <p className="sub">
+            This is not just another search box. When the first set of results is empty, incomplete or too similar, the prototype helps the user decide what detail to add next.
+          </p>
+          <div className="banner">
+            <b>How it works</b>
+            <br />
+            Describe the photo. Review possible matches. If none looks right, add one useful clue. The search then uses that clue to refine the results so you can confirm the right photo.
+          </div>
         </section>
+
         <section className="card">
-          <div className="section-title"><h2>How we measure it</h2></div>
+          <div className="section-title">
+            <h2>How we measure it</h2>
+          </div>
           <div className="statgrid">
-            <div className="stat"><b>Recall@5</b><span>Was the intended photo in the first five?</span></div>
-            <div className="stat"><b>CTR</b><span>Did candidates get clicked?</span></div>
-            <div className="stat"><b>Time</b><span>How long to confirmation?</span></div>
-            <div className="stat"><b>Success</b><span>Did the user confirm the intended photo?</span></div>
+            <div className="stat">
+              <b>Recall@5</b>
+              <span>Was the intended photo among the first five results?</span>
+            </div>
+            <div className="stat">
+              <b>Photo CTR</b>
+              <span>How often do people open a candidate photo?</span>
+            </div>
+            <div className="stat">
+              <b>Time</b>
+              <span>How long does it take to confirm the right photo?</span>
+            </div>
+            <div className="stat">
+              <b>Successful retrieval</b>
+              <span>Did the user confirm the photo they had in mind?</span>
+            </div>
           </div>
         </section>
       </div>
-      <p className="footer">Prototype note: the photo corpus is synthetic so no personal photo library is uploaded. AI API secrets are server-side only.</p>
+
+      <p className="footer">
+        Public prototype using openly licensed demonstration photos. No personal Google Photos account is connected. AI API secrets remain server-side.
+      </p>
     </main>
   );
 }
