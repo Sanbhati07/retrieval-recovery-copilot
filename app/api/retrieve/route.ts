@@ -1,20 +1,43 @@
 import { NextResponse } from "next/server";
-import { parseMemory, embedText, GeminiRuntimeError } from "../../../lib/gemini";
+import { parseMemory, embedText } from "../../../lib/gemini";
 import { getSupabaseAdmin } from "../../../lib/supabase";
-import { chooseRecoveryQuestion } from "../../../lib/recovery";
 import { detectFailure } from "../../../lib/scoring";
 import { rerankCandidates, rowToPhoto } from "../../../lib/data";
+import {
+  buildSearchText,
+  chooseRecoveryQuestion,
+  diversifyCandidates,
+  lexicalRelevanceScore,
+  type RecoveryCandidate,
+  type RecoveryClue,
+} from "../../../lib/recovery-engine";
 import type { Candidate, MemoryClue } from "../../../lib/types";
 
 export const runtime = "nodejs";
 
+const INITIAL_CANDIDATE_POOL = 80;
+const DISPLAY_LIMIT = 12;
+
 function validateClues(raw: unknown): MemoryClue[] {
   if (!Array.isArray(raw)) return [];
-  return raw.filter((x): x is MemoryClue => !!x && typeof x === "object" && "dimension" in x && "value" in x)
+  return raw
+    .filter((item): item is MemoryClue => {
+      if (!item || typeof item !== "object") return false;
+      const clue = item as Partial<MemoryClue>;
+      return typeof clue.dimension === "string" && typeof clue.value === "string" &&
+        typeof clue.certainty === "number" && typeof clue.explicit === "boolean";
+    })
+    .map((clue) => ({
+      dimension: clue.dimension,
+      value: clue.value.trim().slice(0, 160),
+      certainty: Math.max(0, Math.min(1, clue.certainty)),
+      explicit: clue.explicit,
+    }))
+    .filter((clue) => clue.value.length > 0)
     .slice(0, 12);
 }
 
-async function vectorSearch(query: number[], limit = 40): Promise<Candidate[]> {
+async function vectorSearch(query: number[], limit = INITIAL_CANDIDATE_POOL): Promise<Candidate[]> {
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase.rpc("match_photo_embeddings", {
     query_embedding: query,
@@ -29,209 +52,124 @@ async function vectorSearch(query: number[], limit = 40): Promise<Candidate[]> {
   });
 }
 
-function geminiErrorText(error: unknown): string {
-  const parts = [
-    error instanceof Error ? error.message : "",
-    (error as any)?.status,
-    (error as any)?.code,
-    (error as any)?.error?.message,
-    (error as any)?.error?.status,
-    (error as any)?.error?.code,
-  ].filter(Boolean);
-
-  try {
-    parts.push(JSON.stringify(error));
-  } catch {}
-
-  return parts.join(" ").toLowerCase();
+function publicCandidate(candidate: Candidate): RecoveryCandidate {
+  const raw = candidate.retrievalMetadata ?? {};
+  const stringList = (key: string, limit: number): string[] => {
+    const value = (raw as Record<string, unknown>)[key];
+    if (!Array.isArray(value)) return [];
+    return value.filter((item): item is string => typeof item === "string").map((item) => item.slice(0, 100)).slice(0, limit);
+  };
+  const locationRaw = (raw as Record<string, unknown>).location;
+  const location = locationRaw && typeof locationRaw === "object"
+    ? Object.fromEntries(Object.entries(locationRaw as Record<string, unknown>).filter(([, value]) => typeof value === "string").map(([key, value]) => [key, String(value).slice(0, 100)]))
+    : {};
+  const retrievalMetadata = {
+    people: stringList("people", 8),
+    objects: stringList("objects", 12),
+    scenes: stringList("scenes", 12),
+    activities: stringList("activities", 8),
+    appearance: stringList("appearance", 8),
+    event: stringList("event", 8),
+    time: stringList("time", 6),
+    ocrText: stringList("ocrText", 8),
+    location,
+    description: String((raw as Record<string, unknown>).description ?? "").slice(0, 240),
+    queryTerms: stringList("queryTerms", 12),
+  };
+  return {
+    id: candidate.id,
+    image: candidate.image,
+    title: candidate.title,
+    creator: candidate.creator,
+    attribution: candidate.attribution,
+    license: candidate.license,
+    licenseUrl: candidate.licenseUrl,
+    tags: candidate.tags.slice(0, 24).map((tag) => tag.slice(0, 100)),
+    retrievalMetadata,
+    semanticScore: candidate.semanticScore,
+    structuredScore: candidate.structuredScore,
+    finalScore: candidate.finalScore,
+    score: candidate.finalScore,
+  };
 }
 
-function isTransientGeminiError(error: unknown): boolean {
-  const text = geminiErrorText(error);
-
-  return (
-    text.includes("503") ||
-    text.includes("unavailable") ||
-    text.includes("temporarily busy") ||
-    text.includes("high demand") ||
-    text.includes("502") ||
-    text.includes("504")
-  );
-}
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-async function withGeminiRetry<T>(operation: () => Promise<T>): Promise<T> {
-  let lastError: unknown;
-
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      return await operation();
-    } catch (error) {
-      lastError = error;
-
-      if (!isTransientGeminiError(error) || attempt === 2) {
-        throw error;
-      }
-
-      await sleep(800 * Math.pow(2, attempt));
-    }
-  }
-
-  throw lastError;
-}
-function flattenPhotoText(value: unknown): string {
-  if (typeof value === "string") return value;
-  if (Array.isArray(value)) return value.map(flattenPhotoText).join(" ");
-  if (value && typeof value === "object") {
-    return Object.values(value as Record<string, unknown>).map(flattenPhotoText).join(" ");
-  }
-  return "";
-}
-
-const RECOVERY_GROUPS = [
-  {
-    keys: ["vehicle", "car", "motorcycle", "motorbike", "bike", "bicycle", "scooter", "truck", "bus", "automobile"],
-    terms: ["vehicle", "car", "motorcycle", "motorbike", "bike", "bicycle", "scooter", "truck", "bus", "automobile"],
-  },
-  {
-    keys: ["person", "people", "family", "man", "woman", "child", "friend", "group"],
-    terms: ["person", "people", "family", "man", "woman", "child", "friend", "group"],
-  },
-  {
-    keys: ["building", "place", "road", "landscape", "mountain", "lake", "cafe", "garage", "street", "house"],
-    terms: ["building", "place", "road", "landscape", "mountain", "lake", "cafe", "garage", "street", "house"],
-  },
-  {
-    keys: ["sign", "text", "writing", "words", "label", "poster"],
-    terms: ["sign", "text", "writing", "words", "label", "poster"],
-  },
-];
-
-function recoveryTerms(value: string): string[] {
-  const text = value.toLowerCase();
-
-  const group = RECOVERY_GROUPS.find((g) =>
-    g.keys.some((key) => text.includes(key))
-  );
-
-  if (group) return group.terms;
-
-  return text
-    .split(/[^a-z0-9]+/)
-    .filter((term) => term.length >= 3)
-    .slice(0, 8);
-}
-
-function boostRecoveryResults(
-  candidates: Candidate[],
-  recoveryClues: MemoryClue[]
-): Candidate[] {
-  return candidates
-    .map((candidate) => {
-      const searchable = flattenPhotoText({
-        title: candidate.title,
-        tags: candidate.tags,
-        creator: candidate.creator,
-        attribution: candidate.attribution,
-        retrievalMetadata: candidate.retrievalMetadata,
-      }).toLowerCase();
-
-      let boost = 0;
-
-      for (const clue of recoveryClues) {
-        if (!clue.explicit || clue.certainty < 0.75) continue;
-
-        const value = clue.value?.trim();
-        if (!value || value.toLowerCase() === "not sure") continue;
-
-        const terms = recoveryTerms(value);
-        const hits = terms.filter((term) => searchable.includes(term)).length;
-
-        if (hits > 0) {
-          const coverage = Math.min(1, hits / 3);
-          boost += 0.18 * coverage;
-        }
-      }
-
-      return {
-        ...candidate,
-        structuredScore: Math.min(1, candidate.structuredScore + boost),
-        finalScore: Math.min(1, candidate.finalScore + boost),
-      };
-    })
-    .sort((a, b) => b.finalScore - a.finalScore);
-}
 export async function POST(req: Request) {
   try {
-    const body = await req.json() as { memory?: string; activeClues?: MemoryClue[]; sessionId?: string };
+    const body = await req.json() as {
+      memory?: string;
+      activeClues?: MemoryClue[];
+      sessionId?: string;
+    };
     const memory = String(body.memory ?? "").trim();
     const sessionId = String(body.sessionId ?? "").slice(0, 80);
+
     if (memory.length < 8 || memory.length > 1000) {
       return NextResponse.json({ error: "Please describe the photo in at least a sentence and keep it under 1,000 characters." }, { status: 400 });
     }
-    if (!sessionId) return NextResponse.json({ error: "Session is missing. Refresh the page and try again." }, { status: 400 });
+    if (!sessionId) {
+      return NextResponse.json({ error: "Session is missing. Refresh the page and try again." }, { status: 400 });
+    }
 
-    const parsed = await withGeminiRetry(() => parseMemory(memory));
+    // Gemini is used only for a fresh memory search. Recovery answers are ranked locally in the browser.
+    const parsed = await parseMemory(memory);
     const supplied = validateClues(body.activeClues);
-    const clues = [...parsed.clues, ...supplied]
-      .filter((c, i, arr) => arr.findIndex(x => x.dimension === c.dimension && x.value.toLowerCase() === c.value.toLowerCase()) === i)
+    const combinedClues = [...parsed.clues, ...supplied]
+      .filter((clue, index, all) => all.findIndex((other) =>
+        other.dimension === clue.dimension && other.value.toLowerCase() === clue.value.toLowerCase()) === index)
       .slice(0, 14);
 
-    const queryText = [
-  memory,
-  ...supplied
-    .filter((c) => c.explicit)
-    .map((c) => c.value),
-].join(". ");
-
-const query = await withGeminiRetry(() => embedText(queryText));
-    const candidates = await vectorSearch(query, supplied.length > 0 ? 80 : 40);
-    if (!candidates.length) {
+    const semanticText = [parsed.memorySummary, buildSearchText(memory, parsed.clues as RecoveryClue[], supplied)].filter(Boolean).join(". ");
+    const query = await embedText(semanticText);
+    const vectorCandidates = await vectorSearch(query, INITIAL_CANDIDATE_POOL);
+    if (!vectorCandidates.length) {
       return NextResponse.json({ error: "The photo corpus is not indexed yet. Please try again after the public demo finishes its one-time indexing step." }, { status: 503 });
     }
 
-    const reranked = rerankCandidates(candidates, clues);
-const finalResults =
-  supplied.length > 0
-    ? boostRecoveryResults(reranked, supplied)
-    : reranked;
-    const failure = detectFailure(finalResults);
-    const usedForRecovery = clues.filter(c => c.explicit && c.certainty >= 0.75);
-    const recovery = chooseRecoveryQuestion(finalResults, usedForRecovery);
+    // Load lightweight public metadata for the complete 1,000-photo demo corpus once.
+    // This lets recovery find a supported clue outside the first semantic top-80 without another embedding call.
+    const supabase = getSupabaseAdmin();
+    const { data: catalogRows, error: catalogError } = await supabase
+      .from("photo_catalog")
+      .select("id,public_url,title,creator,creator_url,license,license_version,license_url,attribution,provider,source,source_url,tags,retrieval_metadata")
+      .eq("active", true)
+      .eq("embedding_status", "ready")
+      .range(0, 999);
+    if (catalogError) throw catalogError;
+    if (!Array.isArray(catalogRows) || catalogRows.length === 0) {
+      return NextResponse.json({ error: "Photo metadata is temporarily unavailable. Please try again later." }, { status: 503 });
+    }
+
+    const vectorScores = new Map(vectorCandidates.map((candidate) => [candidate.id, candidate.semanticScore]));
+    const fullCatalog: Candidate[] = catalogRows.map((row: any) => {
+      const photo = rowToPhoto(row);
+      const vectorScore = vectorScores.get(photo.id);
+      const semanticScore = vectorScore ?? lexicalRelevanceScore(photo, memory);
+      return { ...photo, semanticScore, structuredScore: 0, finalScore: semanticScore };
+    });
+
+    const rankedCatalog = rerankCandidates(fullCatalog, combinedClues);
+    const vectorIds = new Set(vectorScores.keys());
+    // Keep the visible first-pass ranking grounded in actual vector matches. Use catalogue metadata
+    // as a quota-free backfill pool only for recovery, so a later confirmed clue can retrieve beyond top-80.
+    const semanticRanked = rankedCatalog.filter((candidate) => vectorIds.has(candidate.id));
+    const metadataBackfill = rankedCatalog.filter((candidate) => !vectorIds.has(candidate.id));
+    const recoveryCandidates = [...semanticRanked, ...metadataBackfill];
+    const pool = recoveryCandidates.map(publicCandidate);
+    const visibleCandidates = diversifyCandidates(semanticRanked.map(publicCandidate), DISPLAY_LIMIT);
+    const usedClues = combinedClues as RecoveryClue[];
+    const recovery = chooseRecoveryQuestion(pool, usedClues, memory);
 
     return NextResponse.json({
       mode: "semantic",
       memory: parsed,
-      candidates: finalResults.slice(0, 12).map(c => ({
-        id: c.id,
-        image: c.image,
-        title: c.title,
-        creator: c.creator,
-        attribution: c.attribution,
-        license: c.license,
-        licenseUrl: c.licenseUrl,
-        score: Number(c.finalScore.toFixed(4)),
-        tags: c.tags.slice(0, 8),
-      })),
-      failure,
+      candidates: visibleCandidates,
+      recoveryPool: pool,
+      failure: detectFailure(semanticRanked),
       recovery,
+      recoveryStrategy: "local_candidate_pool",
     });
   } catch (error) {
-    if (error instanceof GeminiRuntimeError) {
-      return NextResponse.json(
-        {
-          error: error.message,
-          code: "GEMINI_TEMPORARILY_UNAVAILABLE",
-        },
-        { status: error.httpStatus }
-      );
-    }
-
-    const message = error instanceof Error
-      ? error.message
-      : "Unexpected retrieval error.";
-
+    const message = error instanceof Error ? error.message : "Unexpected retrieval error.";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
