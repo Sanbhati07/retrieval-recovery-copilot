@@ -69,6 +69,7 @@ export default function Demo() {
   const [loading, setLoading] = useState(false);
   const [localLoading, setLocalLoading] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
+  const [confirmed, setConfirmed] = useState(false);
   const [error, setError] = useState("");
   const [showRecovery, setShowRecovery] = useState(false);
   const [rejectedIds, setRejectedIds] = useState<string[]>([]);
@@ -84,6 +85,7 @@ export default function Demo() {
     setLoading(true);
     setError("");
     setSelected(null);
+    setConfirmed(false);
     setResult(null);
     setActiveClues([]);
     setRejectedIds([]);
@@ -118,6 +120,7 @@ export default function Demo() {
     const allRejected = mergeRejectedIds(rejectedIds, rejectedNow);
     setRejectedIds(allRejected);
     setSelected(null);
+    setConfirmed(false);
     setShowRecovery(true);
     setNoMatch(false);
     setRecoveryNotice("The photos currently shown have been ruled out. We'll use a different clue and keep those photos out of the next results.");
@@ -137,7 +140,7 @@ export default function Demo() {
     setLocalLoading(true);
     setError("");
     setSelected(null);
-    setRecoveryNotice(`Using “${clue.value}” to refine the results. Previously rejected photos stay excluded.`);
+    setRecoveryNotice(`Using â€œ${clue.value}â€ to refine the results. Previously rejected photos stay excluded.`);
 
     // Local-only recovery. No /api/retrieve call, no Gemini parse, and no new embedding request.
     window.setTimeout(() => {
@@ -184,6 +187,7 @@ export default function Demo() {
   }
 
   const displayedCandidates = result?.candidates ?? [];
+  const selectedCandidate = displayedCandidates.find((candidate) => candidate.id === selected) ?? null;
 
   return <main className="wrap">
     <div className="top">
@@ -207,7 +211,7 @@ export default function Demo() {
         <div className="grid" style={{ gridTemplateColumns: "repeat(2,minmax(0,1fr))" }}>
           {SAMPLE_MEMORIES.map((sample) => <button key={sample.label} type="button" className="secondary" disabled={loading || localLoading} style={{ textAlign: "left", height: "auto", minHeight: 74 }} onClick={() => {
             setMemory(sample.memory);
-            setResult(null); setActiveClues([]); setSelected(null); setShowRecovery(false); setRejectedIds([]); setError(""); setRecoveryNotice(""); setNoMatch(false);
+            setResult(null); setActiveClues([]); setSelected(null); setConfirmed(false); setShowRecovery(false); setRejectedIds([]); setError(""); setRecoveryNotice(""); setNoMatch(false);
           }}>
             <strong>{sample.label}</strong><br /><span className="sub">{sample.memory}</span>
           </button>)}
@@ -215,7 +219,7 @@ export default function Demo() {
       </div>
     </section>
 
-    {error && <section className="card"><div className="banner warn"><b>Something went wrong</b><br />{error}<div className="sub" style={{ marginTop: 6 }}>A fresh search needs the server-side Gemini and Supabase configuration. No recovery request has been sent repeatedly.</div></div></section>}
+    {error && <section className="card"><div className="banner warn"><b>{/quota|resource_exhausted|429/i.test(error) ? "Search is temporarily unavailable" : "Something went wrong"}</b><br />{/quota|resource_exhausted|429/i.test(error) ? "This demo uses the Gemini API free tier, and its daily quota has been reached. Please try again after the quota resets." : error}</div></section>}
 
     {result && <>
       <section className="card">
@@ -231,7 +235,9 @@ export default function Demo() {
         {displayedCandidates.length > 0 ? <div className="candidates">
           {displayedCandidates.map((candidate, index) => <button key={candidate.id} type="button" className="candidate" onClick={() => {
             setSelected(candidate.id);
+            setConfirmed(false);
             void track("candidate_clicked", { candidateId: candidate.id, rank: index + 1, metadata: { score: candidate.score ?? candidate.finalScore } });
+            requestAnimationFrame(() => document.getElementById("candidate-confirmation")?.scrollIntoView({ behavior: "smooth", block: "center" }));
           }}>
             {candidate.image && <img src={candidate.image} alt={candidate.title ? `Possible match ${candidate.title}` : "Candidate photo"} loading="lazy" />}
             <div className="candidate-body"><span className="score">#{index + 1}</span><div className="candidate-title">{candidate.title || "Possible match"}</div><div className="candidate-meta">{candidate.attribution || "Open-licensed photo"}</div></div>
@@ -243,7 +249,26 @@ export default function Demo() {
         </div>
       </section>
 
-      {selected && <section className="card"><div className="success"><b>Candidate selected.</b> A click is not counted as confirmed retrieval. For the controlled test, success is determined against the hidden benchmark target.</div></section>}
+      {selectedCandidate && <section className="card" id="candidate-confirmation" aria-live="polite">
+        {confirmed ? <div className="success" role="status"><b>Retrieval confirmed.</b> You found the photo you were looking for.</div> : <>
+          <div className="section-title"><h2>Is this the photo you were looking for?</h2><span className="pill">Confirm your match</span></div>
+          <div style={{ display: "flex", gap: 14, alignItems: "center", margin: "12px 0" }}>
+            {selectedCandidate.image && <img src={selectedCandidate.image} alt={selectedCandidate.title || "Selected candidate photo"} style={{ width: 132, height: 92, objectFit: "cover", borderRadius: 10, border: "1px solid var(--line)" }} />}
+            <div><strong>{selectedCandidate.title || "Selected photo"}</strong><p className="sub" style={{ marginBottom: 0 }}>Confirm only if this matches the photo you had in mind.</p></div>
+          </div>
+          <div className="row">
+            <button className="primary" type="button" onClick={() => {
+              setConfirmed(true);
+              void track("retrieval_success", { candidateId: selectedCandidate.id, rank: displayedCandidates.findIndex((candidate) => candidate.id === selectedCandidate.id) + 1, metadata: { confirmedByUser: true } });
+            }}>Yes, this is it</button>
+            <button className="secondary" type="button" onClick={() => {
+              setSelected(null);
+              setConfirmed(false);
+              requestAnimationFrame(() => document.getElementById("results-step")?.scrollIntoView({ behavior: "smooth", block: "start" }));
+            }}>No, keep searching</button>
+          </div>
+        </>}
+      </section>}
 
       {showRecovery && <section className="card" id="recovery-step">
         <div className="section-title"><h2>Let's recover the search</h2><span className="pill">One useful clue at a time</span></div>
@@ -253,7 +278,7 @@ export default function Demo() {
             <button type="button" className="chip" disabled={localLoading} onClick={() => selectRecoveryOption("Not sure")}>Not sure</button>
           </div>
         </> : <p className="sub">I couldn't find a useful follow-up from the available photo metadata. Add one detail in your own words instead of guessing.</p>}
-        {localLoading && <div className="banner" role="status" aria-live="polite" style={{ marginTop: 12 }}>Finding better matches using “{activeClues[activeClues.length - 1]?.value ?? "your clue"}”… Previously rejected photos will stay out of the results. This step runs locally and does not call Gemini again.</div>}
+        {localLoading && <div className="banner" role="status" aria-live="polite" style={{ marginTop: 12 }}>Finding better matches using â€œ{activeClues[activeClues.length - 1]?.value ?? "your clue"}â€â€¦ Previously rejected photos will stay out of the results. This step runs locally and does not call Gemini again.</div>}
         {!localLoading && recoveryNotice && <div className="banner" role="status" aria-live="polite" style={{ marginTop: 12 }}>{recoveryNotice}</div>}
         <div style={{ marginTop: 14 }}>
           <label htmlFor="recovery-free-text" className="sub" style={{ display: "block", marginBottom: 6 }}>Or add a detail you remember</label>
