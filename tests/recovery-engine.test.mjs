@@ -139,3 +139,31 @@ test('recovery scores remain within the 0-1 range', () => {
   assert.ok(result.candidates.length > 0);
   assert.ok(result.candidates.every((candidate) => (candidate.finalScore ?? candidate.score) <= 1));
 });
+
+const roomMemory = "I want to find a photo of my room before renovation. I remember the old blue wall and a wooden desk, but not when I clicked it.";
+
+test('room-renovation memory never gets road and mountain recovery options from unrelated catalogue photos', () => {
+  const roomCandidates = [
+    photo('desk-1', 'Desktop with laptop and calculator', ['desk', 'laptop', 'calculator', 'office'], { objects: ['desk', 'laptop', 'calculator'], scenes: ['office', 'interior'] }, 0.78),
+    photo('desk-2', 'Books, pencils, laptop, and iPhone on a desk', ['books', 'pencils', 'laptop', 'desk'], { objects: ['books', 'pencils', 'laptop', 'desk'], scenes: ['interior'] }, 0.76),
+    photo('desk-3', 'Office desk with monitor and chair', ['office', 'desk', 'monitor', 'chair'], { objects: ['desk', 'monitor', 'chair'], scenes: ['office', 'interior'] }, 0.74),
+    photo('desk-4', 'Wooden table with laptop and notebooks', ['table', 'laptop', 'notebooks'], { objects: ['table', 'laptop', 'notebooks'], scenes: ['indoor'] }, 0.71),
+    photo('desk-5', 'Room interior with shelves and a plant', ['room', 'shelves', 'plant'], { objects: ['shelves', 'plant'], scenes: ['room', 'interior'] }, 0.69),
+  ];
+  const unrelatedRoads = Array.from({ length: 20 }, (_, index) =>
+    photo(`road-${index}`, `High mountain road through forest ${index}`, ['road', 'mountain', 'forest'], { scenes: ['road', 'mountain', 'forest'] }, 0.95 - index * 0.001)
+  );
+  const question = chooseRecoveryQuestion([...unrelatedRoads, ...roomCandidates], [], roomMemory);
+  assert.ok(question, 'relevant room-related metadata should support a contextual question');
+  const options = question.options.map((value) => value.toLowerCase());
+  assert.ok(!options.some((value) => /road|mountain|forest|trail/.test(value)), `unexpected unrelated option: ${options.join(', ')}`);
+  assert.ok(!options.some((value) => /room|renovation|wall|desk/.test(value)), `known memory details must not be repeated: ${options.join(', ')}`);
+  assert.ok(options.some((value) => /laptop|calculator|books|pencils|monitor|chair|shelves|plant|notebook/.test(value)), `expected room-related detail options, got: ${options.join(', ')}`);
+});
+
+test('unrelated candidate metadata falls back to free text instead of inventing a contextual question', () => {
+  const unrelated = Array.from({ length: 12 }, (_, index) =>
+    photo(`road-only-${index}`, `Mountain road and forest ${index}`, ['mountain', 'road', 'forest'], { scenes: ['mountain', 'road', 'forest'] }, 0.9 - index * 0.01)
+  );
+  assert.equal(chooseRecoveryQuestion(unrelated, [], roomMemory), null);
+});

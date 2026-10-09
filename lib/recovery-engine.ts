@@ -54,10 +54,22 @@ const STOP_WORDS = new Set([
   "place", "location", "scene", "scenery", "someone", "something", "anything", "another", "other", "unknown",
   "not", "sure", "none", "these", "remember", "looking", "search", "find", "found", "there", "was", "were",
   "have", "had", "that", "this", "its", "their", "very", "some", "many", "old", "taken", "show", "shows",
+  "want", "trying", "clicked", "click", "exact", "year", "years", "when", "before", "after", "remembered",
+  "remembering", "forgot", "forget", "need", "looking", "find", "finds", "clicking", "dont", "doesnt",
 ]);
 
 const CONCEPTS: Array<{ key: string; dimension: string; aliases: string[] }> = [
   { key: "building", dimension: "objects", aliases: ["building", "buildings", "house", "houses", "structure", "structures", "temple", "church", "castle", "cabin", "hut", "tower", "office building", "hotel", "school", "warehouse", "apartment", "bungalow", "palace", "mosque"] },
+  { key: "room", dimension: "scenes", aliases: ["room", "rooms", "interior", "interiors", "indoor", "indoors", "bedroom", "living room", "dining room", "office", "workspace", "work space", "home office", "study room", "interior design", "home interior", "apartment interior", "inside a house"] },
+  { key: "wall", dimension: "objects", aliases: ["wall", "walls", "painted wall", "wallpaper", "interior wall", "blue wall", "brick wall"] },
+  { key: "desk", dimension: "objects", aliases: ["desk", "desks", "wooden desk", "office desk", "writing desk", "work desk", "computer desk", "workstation", "table", "tables", "writing table"] },
+  { key: "chair", dimension: "objects", aliases: ["chair", "chairs", "office chair", "armchair", "stool"] },
+  { key: "laptop", dimension: "objects", aliases: ["laptop", "laptops", "notebook computer"] },
+  { key: "monitor", dimension: "objects", aliases: ["monitor", "monitors", "computer monitor", "screen"] },
+  { key: "books", dimension: "objects", aliases: ["book", "books", "notebook", "notebooks", "paperwork", "papers", "folder", "folders"] },
+  { key: "furniture", dimension: "objects", aliases: ["furniture", "cabinet", "cupboard", "wardrobe", "shelf", "shelves", "dresser", "bed", "sofa", "couch", "table lamp"] },
+  { key: "renovation", dimension: "event", aliases: ["renovation", "renovations", "remodel", "remodeling", "remodelling", "renovated room", "room makeover", "home makeover", "refurbishment"] },
+  { key: "plant", dimension: "objects", aliases: ["plant", "plants", "potted plant", "potted plants", "houseplant", "houseplants"] },
   { key: "bridge", dimension: "objects", aliases: ["bridge", "bridges", "overpass", "footbridge"] },
   { key: "motorcycle", dimension: "objects", aliases: ["motorcycle", "motorcycles", "motorbike", "motorbikes", "motor cycle", "motor cycles", "bike", "bikes", "biker", "motorcyclist"] },
   { key: "car", dimension: "objects", aliases: ["car", "cars", "automobile", "vehicle", "vehicles", "truck", "bus", "van"] },
@@ -121,7 +133,8 @@ function candidateText(candidate: RecoveryCandidate): string {
   const metaValues = Object.entries(metadata)
     .filter(([key]) => key !== "location")
     .flatMap(([, value]) => valuesOf(value));
-  return [candidate.title, candidate.tags?.join(" "), candidate.attribution, location, ...metaValues].filter(Boolean).join(" ");
+  return [candidate.title, candidate.tags?.join(" "), candidate.attribution, location, ...metaValues]
+    .filter(Boolean).join(" ");
 }
 
 function conceptFor(value: string): { key: string; aliases: string[]; dimension: string } | undefined {
@@ -137,6 +150,45 @@ function conceptsMentioned(text: string): Set<string> {
     if (concept.aliases.some((alias) => n.includes(` ${norm(alias)} `))) result.add(concept.key);
   }
   return result;
+}
+
+// Recovery options are sourced only from candidates sharing a concrete clue
+// with the user's memory. Otherwise unrelated catalogue rows can leak terms
+// such as road, mountain and forest into a room-renovation search.
+const LOW_SIGNAL_CONTEXT_WORDS = new Set([
+  "black", "white", "blue", "red", "green", "yellow", "brown", "grey", "gray", "pink", "purple",
+  "wooden", "wood", "old", "new", "large", "small", "big", "little", "photo", "photos", "picture",
+  "pictures", "image", "images", "year", "years", "date", "time", "exact", "roughly", "sometime",
+]);
+
+function contextEvidenceText(candidate: RecoveryCandidate): string {
+  const metadata = candidate.retrievalMetadata ?? {};
+  const location = metadata.location && typeof metadata.location === "object"
+    ? Object.values(metadata.location as Record<string, unknown>).join(" ") : "";
+  const metadataValues = Object.entries(metadata)
+    .filter(([key]) => key !== "location")
+    .flatMap(([, value]) => valuesOf(value));
+  // Exclude creator names and attribution from relevance checks.
+  return [candidate.title, candidate.tags?.join(" "), location, ...metadataValues]
+    .filter(Boolean).join(" ");
+}
+
+function contextAnchors(memory: string, usedClues: RecoveryClue[]): { words: string[]; concepts: Set<string> } {
+  const context = [memory, ...usedClues
+    .filter((clue) => clue.explicit && clue.certainty >= 0.75 && norm(clue.value) !== "not sure")
+    .map((clue) => clue.value)].join(" ");
+  const words = [...new Set(norm(context).split(" ").filter((word) =>
+    word.length >= 3 && !STOP_WORDS.has(word) && !LOW_SIGNAL_CONTEXT_WORDS.has(word) && !/^\d+$/.test(word)
+  ))];
+  return { words, concepts: conceptsMentioned(context) };
+}
+
+function matchesMemoryContext(candidate: RecoveryCandidate, anchors: { words: string[]; concepts: Set<string> }): boolean {
+  if (!anchors.words.length && !anchors.concepts.size) return false;
+  const text = contextEvidenceText(candidate);
+  if (anchors.words.some((word) => includesPhrase(text, word))) return true;
+  const candidateConcepts = conceptsMentioned(text);
+  return [...anchors.concepts].some((concept) => candidateConcepts.has(concept));
 }
 
 export function lexicalRelevanceScore(candidate: RecoveryCandidate, memory: string): number {
@@ -205,7 +257,13 @@ export function chooseRecoveryQuestion(
 ): RecoveryQuestion {
   if (!candidates.length) return null;
   const knownText = [originalMemory, ...usedClues.filter((c) => c.explicit && c.certainty >= 0.75).map((c) => c.value)].join(" ");
-  const available = candidates.slice(0, 80);
+  const anchors = contextAnchors(originalMemory, usedClues);
+  // Filter before slicing because useful candidates may appear after unrelated
+  // semantic results or inside the catalogue metadata backfill.
+  const available = candidates.filter((candidate) => matchesMemoryContext(candidate, anchors)).slice(0, 80);
+  // When too few context-matching candidates exist, let the UI fall back to
+  // free text rather than offering unsupported or unrelated keyword buttons.
+  if (available.length < 3) return null;
   const rankedDimensions: Array<{ dimension: string; score: number; terms: Array<{ value: string; count: number }> }> = [];
 
   for (const dimension of DIMENSIONS) {
